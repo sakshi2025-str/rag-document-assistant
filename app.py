@@ -1,48 +1,203 @@
 """
 app.py
-Streamlit chat interface for DocuChat.
 
-Run with:
+Streamlit interface for DocuChat.
+
+Run:
     streamlit run app.py
 """
 
+import os
+
 import streamlit as st
+
 from Qa import load_vector_store, get_answer
 
-st.set_page_config(page_title="DocuChat", page_icon="📄")
+
+# -----------------------------
+# Page Configuration
+# -----------------------------
+
+st.set_page_config(
+    page_title="DocuChat",
+    page_icon="📄",
+    layout="wide"
+)
+
+
+# -----------------------------
+# Header
+# -----------------------------
+
 st.title("📄 DocuChat")
-st.caption("Ask questions about your uploaded documents. Answers are grounded only in what's in the document.")
 
-# Load the vector store once and cache it across reruns
-@st.cache_resource
-def get_vector_store():
-    return load_vector_store()
+st.markdown(
+    """
+    **Chat with your documents using Retrieval-Augmented Generation (RAG).**
 
-vector_store = get_vector_store()
+    Upload a PDF, ask questions, and get answers grounded in the document.
+    """
+)
 
-# Keep chat history across turns
+
+# -----------------------------
+# Sidebar
+# -----------------------------
+
+with st.sidebar:
+
+    st.header("📚 Document")
+
+    uploaded_file = st.file_uploader(
+        "Upload a PDF",
+        type=["pdf"]
+    )
+
+    st.divider()
+
+    if st.button("🗑️ Clear Chat"):
+
+        st.session_state.messages = []
+
+        st.rerun()
+
+
+# -----------------------------
+# Session State
+# -----------------------------
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display past messages
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
 
-# Chat input box
-question = st.chat_input("Ask a question about your document...")
+# -----------------------------
+# Existing Vector Store
+# -----------------------------
+
+try:
+
+    vector_store = load_vector_store()
+
+except FileNotFoundError:
+
+    vector_store = None
+
+    st.info(
+        "📄 No document database found. "
+        "Please process your PDF using ingest.py first."
+    )
+
+
+# -----------------------------
+# Display Chat History
+# -----------------------------
+
+for message in st.session_state.messages:
+
+    with st.chat_message(message["role"]):
+
+        st.write(message["content"])
+
+        if message["role"] == "assistant":
+
+            sources = message.get("sources", [])
+
+            if sources:
+
+                with st.expander("📚 View Sources"):
+
+                    for source in sources:
+
+                        st.markdown(
+                            f"**{source['file']} — Page "
+                            f"{source['page']}**"
+                        )
+
+                        st.caption(
+                            source["content"][:400] + "..."
+                        )
+
+
+# -----------------------------
+# Chat Input
+# -----------------------------
+
+question = st.chat_input(
+    "Ask a question about your document..."
+)
+
 
 if question:
-    # Show user's message
-    st.session_state.messages.append({"role": "user", "content": question})
+
+    # Display user message
+
+    st.session_state.messages.append({
+        "role": "user",
+        "content": question
+    })
+
     with st.chat_message("user"):
+
         st.write(question)
 
-    # Get answer
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            answer, sources = get_answer(question, vector_store)
-            st.write(answer)
-            st.caption(f"Source page(s): {sources}")
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    # Check vector store
+
+    if vector_store is None:
+
+        with st.chat_message("assistant"):
+
+            st.error(
+                "No document database is available. "
+                "Please process a PDF first."
+            )
+
+    else:
+
+        # Generate answer
+
+        with st.chat_message("assistant"):
+
+            with st.spinner("🔎 Searching document..."):
+
+                try:
+
+                    answer, sources = get_answer(
+                        question,
+                        vector_store
+                    )
+
+                    st.write(answer)
+
+                    # Display sources
+
+                    if sources:
+
+                        with st.expander("📚 View Sources"):
+
+                            for source in sources:
+
+                                st.markdown(
+                                    f"**{source['file']} — "
+                                    f"Page {source['page']}**"
+                                )
+
+                                st.caption(
+                                    source["content"][:400]
+                                    + "..."
+                                )
+
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": answer,
+                        "sources": sources
+                    })
+
+                except Exception as e:
+
+                    st.error(
+                        "Something went wrong while generating "
+                        "the answer."
+                    )
+
+                    st.caption(str(e))
